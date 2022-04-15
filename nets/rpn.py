@@ -7,18 +7,9 @@ from utils.anchors import _enumerate_shifted_anchor, generate_anchor_base
 from utils.utils_bbox import loc2bbox
 
 
-class ProposalCreator():
-	def __init__(
-			self,
-			mode,
-			nms_iou=0.7,
-			n_train_pre_nms=12000,
-			n_train_post_nms=600,
-			n_test_pre_nms=3000,
-			n_test_post_nms=300,
-			min_size=16
-
-	):
+class ProposalCreator:
+	def __init__(self, mode, nms_iou=0.7, n_train_pre_nms=12000, n_train_post_nms=600, n_test_pre_nms=3000,
+				 n_test_post_nms=300, min_size=16):
 		# -----------------------------------#
 		#   设置预测还是训练
 		# -----------------------------------#
@@ -94,15 +85,8 @@ class ProposalCreator():
 
 
 class RegionProposalNetwork(nn.Module):
-	def __init__(
-			self,
-			in_channels=512,
-			mid_channels=512,
-			ratios=[0.5, 1, 2],
-			anchor_scales=[8, 16, 32],
-			feat_stride=16,
-			mode="training",
-	):
+	def __init__(self, in_channels=512, mid_channels=512, ratios=(0.5, 1, 2), anchor_scales=(8, 16, 32), feat_stride=16,
+				 mode="training"):
 		super(RegionProposalNetwork, self).__init__()
 		# -----------------------------------------#
 		#   生成基础先验框，shape为[9, 4]
@@ -113,15 +97,15 @@ class RegionProposalNetwork(nn.Module):
 		# -----------------------------------------#
 		#   先进行一个3x3的卷积，可理解为特征整合
 		# -----------------------------------------#
-		self.conv1 = nn.Conv2d(in_channels, mid_channels, 3, 1, 1)
+		self.conv1 = nn.Conv2d(in_channels, mid_channels, (3, 3), (1, 1), 1)
 		# -----------------------------------------#
 		#   分类预测先验框内部是否包含物体
 		# -----------------------------------------#
-		self.score = nn.Conv2d(mid_channels, n_anchor * 2, 1, 1, 0)
+		self.score = nn.Conv2d(mid_channels, n_anchor * 2, (1, 1), (1, 1), 0)
 		# -----------------------------------------#
 		#   回归预测对先验框进行调整
 		# -----------------------------------------#
-		self.loc = nn.Conv2d(mid_channels, n_anchor * 4, 1, 1, 0)
+		self.loc = nn.Conv2d(mid_channels, n_anchor * 4, (1, 1), (1, 1), 0)
 
 		# -----------------------------------------#
 		#   特征点间距步长
