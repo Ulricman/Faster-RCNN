@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -64,11 +65,7 @@ if __name__ == "__main__":
 	pretrained = False
 	anchors_size = [8, 16, 32]
 
-	# ----------------------------------------------------#
 	#   训练分为两个阶段，分别是冻结阶段和解冻阶段。
-	#   显存不足与数据集大小无关，提示显存不足请调小batch_size。
-	# ----------------------------------------------------#
-	# ----------------------------------------------------#
 	#   冻结阶段训练参数
 	#   此时模型的主干被冻结了，特征提取网络不发生改变
 	#   占用的显存较小，仅对网络进行微调
@@ -85,28 +82,17 @@ if __name__ == "__main__":
 	UnFreeze_Epoch = 100
 	Unfreeze_batch_size = 2
 	Unfreeze_lr = 1e-5
-	# ------------------------------------------------------#
 	#   是否进行冻结训练，默认先冻结主干训练后解冻训练。
-	# ------------------------------------------------------#
 	Freeze_Train = True
-	# ------------------------------------------------------#
 	#   用于设置是否使用多线程读取数据
 	#   开启后会加快数据读取速度，但是会占用更多内存
 	#   内存较小的电脑可以设置为2或者0
-	# ------------------------------------------------------#
 	num_workers = 4
-	# ----------------------------------------------------#
 	#   获得图片路径和标签
-	# ----------------------------------------------------#
 	train_annotation_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/2007_train.txt'
 	val_annotation_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/2007_val.txt'
 
-	# ----------------------------------------------------#
 	#   获取classes和anchor
-	# ----------------------------------------------------#
-
-	# class_names, num_classes = get_classes(classes_path)
-
 	model = FasterRCNN(num_classes, anchor_scales=anchors_size, backbone=backbone, pretrained=pretrained)
 	if not pretrained:
 		weights_init(model)
@@ -130,7 +116,7 @@ if __name__ == "__main__":
 	loss_history = LossHistory("logs/")
 
 	with open(train_annotation_path) as f:
-		train_lines = f.readlines()  # ['000012\n']
+		train_lines = f.readlines()  # have the info of the bbox
 	with open(val_annotation_path) as f:
 		val_lines = f.readlines()  # 2510
 	num_train = len(train_lines)  # 2501
@@ -154,7 +140,7 @@ if __name__ == "__main__":
 		epoch_step_val = num_val // batch_size
 
 		if epoch_step == 0 or epoch_step_val == 0:
-			raise ValueError("数据集过小，无法进行训练，请扩充数据集。")
+			raise ValueError("The dataset is too small for training, please expand the dataset.")
 
 		optimizer = optim.Adam(model_train.parameters(), lr, weight_decay=5e-4)
 		lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.96)
@@ -176,10 +162,8 @@ if __name__ == "__main__":
 			for param in model.extractor.parameters():
 				param.requires_grad = False
 
-		# ------------------------------------#
-		#   冻结bn层
-		# ------------------------------------#
-		model.freeze_bn()
+		model.freezeBN()
+		# Because the batch size is too small, the BN is not stable, thus we need to freeze the BN
 
 		train_util = FasterRCNNTrainer(model, optimizer)
 
@@ -198,7 +182,7 @@ if __name__ == "__main__":
 		epoch_step_val = num_val // batch_size
 
 		if epoch_step == 0 or epoch_step_val == 0:
-			raise ValueError("数据集过小，无法进行训练，请扩充数据集。")
+			raise ValueError("The dataset is too small for training, please expand the dataset.")
 
 		optimizer = optim.Adam(model_train.parameters(), lr, weight_decay=5e-4)
 		lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.96)
@@ -217,10 +201,7 @@ if __name__ == "__main__":
 			for param in model.extractor.parameters():
 				param.requires_grad = True
 
-		# ------------------------------------#
-		#   冻结bn层
-		# ------------------------------------#
-		model.freeze_bn()
+		model.freezeBN()
 
 		train_util = FasterRCNNTrainer(model, optimizer)
 
