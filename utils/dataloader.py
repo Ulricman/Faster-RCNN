@@ -3,11 +3,9 @@ import numpy as np
 from PIL import Image
 from torch.utils.data.dataset import Dataset
 
-from utils.utils import cvtColor, preprocess_input
-
 
 class FRCNNDataset(Dataset):
-	def __init__(self, annotation_lines, input_shape=[600, 600], train=True):
+	def __init__(self, annotation_lines, input_shape=(600, 600), train=True):
 		self.annotation_lines = annotation_lines
 		self.length = len(annotation_lines)
 		self.input_shape = input_shape
@@ -23,7 +21,8 @@ class FRCNNDataset(Dataset):
 		#   验证时不进行数据的随机增强
 		# ---------------------------------------------------#
 		image, y = self.get_random_data(self.annotation_lines[index], self.input_shape[0:2], random=self.train)
-		image = np.transpose(preprocess_input(np.array(image, dtype=np.float32)), (2, 0, 1))
+		image = np.array(image, dtype=np.float32) / 255.0
+		image = np.transpose(image, (2, 0, 1))
 		# eg. (375, 500, 3) --> (3, 375, 500) separate the three channels of the RGB.
 
 		box_data = np.zeros((len(y), 5))
@@ -34,16 +33,12 @@ class FRCNNDataset(Dataset):
 		label = box_data[:, -1]
 		return image, box, label
 
-	def rand(self, a=0, b=1):
+	def rand(self, a=0., b=1.):
 		return np.random.rand() * (b - a) + a
 
 	def get_random_data(self, annotation_line, input_shape, jitter=.3, hue=.1, sat=1.5, val=1.5, random=True):
 		line = annotation_line.split()
-		# ------------------------------#
-		#   读取图像并转换成RGB图像
-		# ------------------------------#
 		image = Image.open(line[0])
-		image = cvtColor(image)
 		# ------------------------------#
 		#   获得图像的高宽与目标高宽
 		# ------------------------------#
