@@ -10,33 +10,20 @@ class FasterRCNN(nn.Module):
 				 backbone='vgg', pretrained=False):
 		super(FasterRCNN, self).__init__()
 		self.feat_stride = feat_stride
+		
 		if backbone == 'vgg':
-			self.extractor, classifier = decom_vgg16(pretrained)
-			# ---------------------------------#
-			#   构建建议框网络
-			# ---------------------------------#
+			self.extractor, classifier = decom_vgg16(pretrained=pretrained)
 			self.rpn = RegionProposalNetwork(512, 512, ratios=ratios, anchor_scales=anchor_scales,
 											 feat_stride=self.feat_stride, mode=mode)
-			# ---------------------------------#
-			#   构建分类器网络
-			# ---------------------------------#
 			self.head = VGG16RoIHead(n_class=num_classes + 1, roi_size=7, spatial_scale=1, classifier=classifier)
+
 		elif backbone == 'resnet50':
-			self.extractor, classifier = resnet50(pretrained)
-			# ---------------------------------#
-			#   构建classifier网络
-			# ---------------------------------#
+			self.extractor, classifier = resnet50(pretrained=pretrained)
 			self.rpn = RegionProposalNetwork(1024, 512, ratios=ratios, anchor_scales=anchor_scales,
 											 feat_stride=self.feat_stride, mode=mode)
-			# ---------------------------------#
-			#   构建classifier网络
-			# ---------------------------------#
 			self.head = Resnet50RoIHead(n_class=num_classes + 1, roi_size=14, spatial_scale=1, classifier=classifier)
 
-	def forward(self, x, scale=1.):
-		# ---------------------------------#
-		#   计算输入图片的大小
-		# ---------------------------------#
+	def forward(self, x, scale=1.0):
 		img_size = x.shape[2:]
 		# ---------------------------------#
 		#   利用主干网络提取特征
@@ -53,7 +40,7 @@ class FasterRCNN(nn.Module):
 		roi_cls_locs, roi_scores = self.head.forward(base_feature, rois, roi_indices, img_size)
 		return roi_cls_locs, roi_scores, rois, roi_indices
 
-	def freeze_bn(self):
-		for m in self.modules():
-			if isinstance(m, nn.BatchNorm2d):
-				m.eval()
+	def freezeBN(self):
+		for module in self.modules():
+			if isinstance(module, nn.BatchNorm2d):
+				module.eval()
