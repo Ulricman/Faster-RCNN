@@ -10,13 +10,13 @@ def bbox_iou(bbox_a, bbox_b):  # anchor/roi bbox ： (N, 4)
 	if bbox_a.shape[1] != 4 or bbox_b.shape[1] != 4:
 		print(bbox_a, bbox_b)
 		raise IndexError
-	tl = np.maximum(bbox_a[:, None, :2], bbox_b[:, :2])
-	br = np.minimum(bbox_a[:, None, 2:], bbox_b[:, 2:])
+	topLeft = np.maximum(bbox_a[:, None, :2], bbox_b[:, :2])
+	lowRight = np.minimum(bbox_a[:, None, 2:], bbox_b[:, 2:])
 	# the 'None' here is to calculate each pair of bbox_a and bbox_b
-	area_i = np.prod(br - tl, axis=2) * (tl < br).all(axis=2)
+	intersection = np.prod(lowRight - topLeft, axis=2) * (topLeft < lowRight).all(axis=2)
 	area_a = np.prod(bbox_a[:, 2:] - bbox_a[:, :2], axis=1)
 	area_b = np.prod(bbox_b[:, 2:] - bbox_b[:, :2], axis=1)
-	return area_i / (area_a[:, None] + area_b - area_i)  # (len(bbox_a), len(bbox_b))
+	return intersection / (area_a[:, None] + area_b - intersection)  # (len(bbox_a), len(bbox_b))
 
 
 def bbox2loc(src_bbox, dst_bbox):  # src_bbox/dest_bbox:(128, 4)
@@ -95,36 +95,29 @@ class AnchorTargetCreator(object):
 		# ------------------------------------------ #
 		label = np.empty((len(anchor),), dtype=np.int32)
 		label.fill(-1)
-
-		# ------------------------------------------------------------------------ #
 		#   argmax_ious为每个先验框对应的最大的真实框的序号         [num_anchors, ]
-		#   max_ious为每个真实框对应的最大的真实框的iou             [num_anchors, ]
+		#   max_ious为每个先验框对应的最大的真实框的iou             [num_anchors, ]
 		#   gt_argmax_ious为每一个真实框对应的最大的先验框的序号    [num_gt, ]
-		# ------------------------------------------------------------------------ #
 		argmax_ious, max_ious, gt_argmax_ious = self._calc_ious(anchor, bbox)
-
-		# ----------------------------------------------------- #
 		#   如果小于门限值则设置为负样本
 		#   如果大于门限值则设置为正样本
 		#   每个真实框至少对应一个先验框
-		# ----------------------------------------------------- #
+
 		label[max_ious < self.neg_iou_thresh] = 0
 		label[max_ious >= self.pos_iou_thresh] = 1
 		if len(gt_argmax_ious) > 0:
 			label[gt_argmax_ious] = 1
 
-		# ----------------------------------------------------- #
-		#   判断正样本数量是否大于128，如果大于则限制在128
-		# ----------------------------------------------------- #
+		# what if the total number of pos and neg less than 256?
+
+		# if the number of positive samples is greater than 128, restrict it to 128.
 		n_pos = int(self.pos_ratio * self.n_sample)
 		pos_index = np.where(label == 1)[0]
 		if len(pos_index) > n_pos:
 			disable_index = np.random.choice(pos_index, size=(len(pos_index) - n_pos), replace=False)
 			label[disable_index] = -1
 
-		# ----------------------------------------------------- #
-		#   平衡正负样本，保持总数量为256
-		# ----------------------------------------------------- #
+		# keep the total number of positive and negative samples to 256.
 		n_neg = self.n_sample - np.sum(label == 1)
 		neg_index = np.where(label == 0)[0]
 		if len(neg_index) > n_neg:
@@ -136,7 +129,7 @@ class AnchorTargetCreator(object):
 
 class ProposalTargetCreator(object):
 	def __init__(self, n_sample=128, pos_ratio=0.5, pos_iou_thresh=0.5, neg_iou_thresh_high=0.5, neg_iou_thresh_low=0):
-		self.n_sample = n_sample  # total number of positive samples and negative samples.
+		self.n_sample = n_sample
 		self.pos_ratio = pos_ratio
 		self.pos_roi_per_image = np.round(self.n_sample * self.pos_ratio)
 		self.pos_iou_thresh = pos_iou_thresh
@@ -145,10 +138,7 @@ class ProposalTargetCreator(object):
 
 	def __call__(self, roi, bbox, label, loc_normalize_std=(0.1, 0.1, 0.2, 0.2)):
 		roi = np.concatenate((roi.detach().cpu().numpy(), bbox), axis=0)
-		# numpy can not read CUDA tensor. it should be converted to CPU tensor
-		# ----------------------------------------------------- #
-		#   计算建议框和真实框的重合程度
-		# ----------------------------------------------------- #
+		# numpy can not read CUDA tensor. it should be converted to CPU tensor.
 		iou = bbox_iou(roi, bbox)  # roi/bbox:(N, 4)
 		# iou: (num_roi, num_bbox)
 
@@ -157,33 +147,27 @@ class ProposalTargetCreator(object):
 			max_iou = np.zeros(len(roi))
 			gt_roi_label = np.zeros(len(roi))
 		else:
-			# ---------------------------------------------------------#
-			#   获得每一个建议框最对应的真实框  [num_roi, ]
-			# ---------------------------------------------------------#
-			gt_assignment = iou.argmax(axis=1)
-			# ---------------------------------------------------------#
-			#   获得每一个建议框最对应的真实框的iou  [num_roi, ]
-			# ---------------------------------------------------------#
-			max_iou = iou.max(axis=1)
+			gt_assignment = iou.argmax(axis=1)  # [num_roi, ]
+			max_iou = iou.max(axis=1)  # [num_roi, ]
 			# ---------------------------------------------------------#
 			#   真实框的标签要+1因为有背景的存在
 			# ---------------------------------------------------------#
 			gt_roi_label = label[gt_assignment] + 1
 
 		# ----------------------------------------------------------------#
-		#   满足建议框和真实框重合程度大于neg_iou_thresh_high的作为负样本
+		#   满足建议框和真实框重合程度大于pos_iou_thresh_high的作为正样本
 		#   将正样本的数量限制在self.pos_roi_per_image以内
 		# ----------------------------------------------------------------#
 		pos_index = np.where(max_iou >= self.pos_iou_thresh)[0]
 		pos_roi_per_this_image = int(min(self.pos_roi_per_image, pos_index.size))
 		if pos_index.size > 0:  # there exists positive sample.
 			pos_index = np.random.choice(pos_index, size=pos_roi_per_this_image, replace=False)
-		# 'replace=False': can not take the same number.
 		# -----------------------------------------------------------------------------------------------------#
 		#   满足建议框和真实框重合程度小于neg_iou_thresh_high大于neg_iou_thresh_low作为负样本
 		#   将正样本的数量和负样本的数量的总和固定成self.n_sample
 		# -----------------------------------------------------------------------------------------------------#
-		neg_index = np.where((max_iou < self.neg_iou_thresh_high) & (max_iou >= self.neg_iou_thresh_low))[0]
+		# neg_index = np.where((max_iou < self.neg_iou_thresh_high) & (max_iou >= self.neg_iou_thresh_low))[0]
+		neg_index = np.where(max_iou < self.neg_iou_thresh_high)[0]
 		neg_roi_per_this_image = self.n_sample - pos_roi_per_this_image
 		neg_roi_per_this_image = int(min(neg_roi_per_this_image, neg_index.size))
 		if neg_index.size > 0:
