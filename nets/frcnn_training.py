@@ -1,5 +1,4 @@
 from collections import namedtuple
-
 import numpy as np
 import torch
 from torch import nn
@@ -60,10 +59,6 @@ class AnchorTargetCreator(object):
 			return np.zeros_like(anchor), label
 
 	def _calc_ious(self, anchor, bbox):
-		# ----------------------------------------------#
-		#   anchor和bbox的iou
-		#   获得的ious的shape为[num_anchors, num_gt]
-		# ----------------------------------------------#
 		ious = bbox_iou(anchor, bbox)  # (num_anchors, num_gt)
 
 		if len(bbox) == 0:
@@ -95,9 +90,7 @@ class AnchorTargetCreator(object):
 		# ------------------------------------------ #
 		label = np.empty((len(anchor),), dtype=np.int32)
 		label.fill(-1)
-		#   argmax_ious为每个先验框对应的最大的真实框的序号         [num_anchors, ]
-		#   max_ious为每个先验框对应的最大的真实框的iou             [num_anchors, ]
-		#   gt_argmax_ious为每一个真实框对应的最大的先验框的序号    [num_gt, ]
+
 		argmax_ious, max_ious, gt_argmax_ious = self._calc_ious(anchor, bbox)
 		#   如果小于门限值则设置为负样本
 		#   如果大于门限值则设置为正样本
@@ -108,7 +101,6 @@ class AnchorTargetCreator(object):
 		if len(gt_argmax_ious) > 0:
 			label[gt_argmax_ious] = 1
 
-		# what if the total number of pos and neg less than 256?
 
 		# if the number of positive samples is greater than 128, restrict it to 128.
 		n_pos = int(self.pos_ratio * self.n_sample)
@@ -228,9 +220,8 @@ class FasterRCNNTrainer(nn.Module):
 	def forward(self, imgs, bboxes, labels, scale):
 		n = imgs.shape[0]
 		img_size = imgs.shape[2:]
-		# -------------------------------#
-		#   获取公用特征层
-		# -------------------------------#
+
+		# shared feature map
 		base_feature = self.faster_rcnn.extractor(imgs)
 
 		# -------------------------------------------------- #
