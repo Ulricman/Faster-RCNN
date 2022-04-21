@@ -23,9 +23,8 @@ class FasterRCNN(nn.Module):
 											 anchor_scales=anchor_scales, feat_stride=self.feat_stride, mode=mode)
 			self.head = Resnet50RoIHead(n_class=num_classes + 1, roi_size=14, spatial_scale=1, classifier=classifier)
 
-	def forward(self, x, scale=1.0):
+	def forward(self, x, scale=1.):
 		img_size = x.shape[2:]
-		print(x.shape)
 		# ---------------------------------#
 		#   利用主干网络提取特征
 		# ---------------------------------#
