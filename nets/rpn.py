@@ -29,6 +29,14 @@ class ProposalCreator:
 		self.min_size = min_size
 
 	def __call__(self, loc, score, anchor, img_size, scale=1.):
+		"""
+		:param loc: the fine tuning value of the original anchors. (dx, dy, dw, dh)
+		:param score: the score (probability) of whether the anchor (?) contains an object or not.
+		:param anchor: the coordinates of the base anchors. (38 * 38 * 9, 4)
+		:param img_size:
+		:param scale: 1
+		:return: the selected rois after NMS. (tensor)
+		"""
 		if self.mode == "training":
 			n_pre_nms = self.n_train_pre_nms
 			n_post_nms = self.n_train_post_nms
@@ -39,19 +47,21 @@ class ProposalCreator:
 		anchor = torch.from_numpy(anchor)  # turn anchor into tensors.
 		if loc.is_cuda:
 			anchor = anchor.cuda()
-		# turn the predicted results by RPN into roi
-		roi = loc2bbox(anchor, loc)
+		# turn the predicted results by RPN into roi.
+		# "loc" is the fine tuning value of the (x, y, w, h).
+		roi = loc2bbox(anchor, loc)  # a tensor.
 
 		#  prevent the roi from going beyond the boundary.
 		roi[:, [0, 2]] = torch.clamp(roi[:, [0, 2]], min=0, max=img_size[1])
 		roi[:, [1, 3]] = torch.clamp(roi[:, [1, 3]], min=0, max=img_size[0])
 
-		# the height and width should not less than 16
+		# the height and width should not less than 16.
 		min_size = self.min_size * scale
 		keep = torch.where(((roi[:, 2] - roi[:, 0]) >= min_size) & ((roi[:, 3] - roi[:, 1]) >= min_size))[0]
 		roi = roi[keep, :]
 		score = score[keep]
 
+		# select rois with the n_pre_nms highest score.
 		order = torch.argsort(score, descending=True)
 		if n_pre_nms > 0:
 			order = order[:n_pre_nms]
@@ -68,7 +78,7 @@ class RegionProposalNetwork(nn.Module):  # RPN
 	def __init__(self, in_channels=512, mid_channels=512, ratios=(0.5, 1, 2), anchor_scales=(8, 16, 32), feat_stride=16,
 				 mode="training"):
 		super(RegionProposalNetwork, self).__init__()
-		# generate base anchors (shape is (9, 4))
+		# generate base anchors for one point (shape is (9, 4))
 		self.anchor_base = generate_anchor_base(anchor_scales=anchor_scales, ratios=ratios)
 		n_anchor = self.anchor_base.shape[0]
 
@@ -93,33 +103,48 @@ class RegionProposalNetwork(nn.Module):  # RPN
 		normal_init(self.loc, 0, 0.01)
 
 	def forward(self, x, img_size, scale=1.):
+		"""
+		:param x: the shared feature map.
+		:param img_size:
+		:param scale: 1
+		:return rpn_locs: the fine tuning value of the original anchors.
+		:return rpn_scores: the score (probability) of the roi to contain an object.
+		:return rois: all the roi in the minibatch (n).
+		:return roi_indices: a tensor to indicate which image the roi belongs to.
+		:return anchor: all of the base anchors. (38 * 38 * 9, 4)
+		"""
 		n, _, h, w = x.shape  # (4, 1024, 38, 38)
 		x = F.relu(self.conv1(x))  # (4, 512, 38, 38)
 
-		rpn_locs = self.loc(x)  # (4, 36, 38, 38)
+		rpn_locs = self.loc(x)  # (4, 9 * 4, 38, 38)
 		rpn_locs = rpn_locs.permute(0, 2, 3, 1).contiguous().view(n, -1, 4)  # (4, 12996, 4)
 
-		rpn_scores = self.score(x)  # (4, 18, 38, 38)
+		rpn_scores = self.score(x)  # (4, 9 * 2, 38, 38)
 		rpn_scores = rpn_scores.permute(0, 2, 3, 1).contiguous().view(n, -1, 2)  # (4, 12996, 2)
+		# 38 * 38 * 9 = 12996 is the number of all the anchors in one feature map.
 
 		# --------------------------------------------------------------------------------------#
 		#   进行softmax概率计算，每个先验框只有两个判别结果
 		#   内部包含物体或者内部不包含物体，rpn_softmax_scores[:, :, 1]的内容为包含物体的概率
 		# --------------------------------------------------------------------------------------#
-		rpn_softmax_scores = F.softmax(rpn_scores, dim=-1)
-		rpn_fg_scores = rpn_softmax_scores[:, :, 1].contiguous()
-		rpn_fg_scores = rpn_fg_scores.view(n, -1)
+		rpn_softmax_scores = F.softmax(rpn_scores, dim=-1)  # (4, 12996, 2)
+		rpn_fg_scores = rpn_softmax_scores[:, :, 1].contiguous()  # (4, 12996)
+		rpn_fg_scores = rpn_fg_scores.view(n, -1)  # (4, 12996)
 
 		# ------------------------------------------------------------------------------------------------#
 		#   生成先验框，此时获得的anchor是布满网格点的，当输入图片为600,600,3的时候，shape为(12996, 4)
 		# ------------------------------------------------------------------------------------------------#
-		anchor = _enumerate_shifted_anchor(np.array(self.anchor_base), self.feat_stride, h, w)
+
+		# generate all the anchors in the feature map.
+		anchor = _enumerate_shifted_anchor(np.array(self.anchor_base), self.feat_stride, h, w)  # (12996, 4)
 
 		rois = list()
 		roi_indices = list()
-		for i in range(n):
+		for i in range(n):  # n is the batch size.
+			# select some roi by NMS. (tensor)
 			roi = self.proposal_layer(rpn_locs[i], rpn_fg_scores[i], anchor, img_size, scale=scale)
-			batch_index = i * torch.ones((len(roi),))
+			# batch_index = i * torch.ones((len(roi),))
+			batch_index = torch.Tensor([i]) * torch.ones((len(roi),))
 			rois.append(roi)
 			roi_indices.append(batch_index)
 
