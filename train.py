@@ -4,12 +4,14 @@ import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-
+from tqdm import tqdm
 from nets.frcnn import FasterRCNN
 from nets.frcnn_training import FasterRCNNTrainer, weights_init
 from utils.callbacks import LossHistory
 from utils.dataloader import FRCNNDataset, frcnn_dataset_collate
 from utils.utils_fit import fit_one_epoch
+from utils.utils import get_lr
+
 
 Cuda = True
 classes_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/model_data/voc_classes.txt'
@@ -52,7 +54,7 @@ anchors_size = [8, 16, 32]
 # ----------------------------------------------------#
 Init_Epoch = 0
 Freeze_Epoch = 5
-Freeze_batch_size = 1
+Freeze_batch_size = 4
 Freeze_lr = 1e-4
 # ----------------------------------------------------#
 #   解冻阶段训练参数
@@ -185,4 +187,4 @@ if True:
 											 end_epoch, Cuda)
 		lr_scheduler.step()
 
-writer.close()
+
