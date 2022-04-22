@@ -20,22 +20,23 @@ class ProposalCreator:
 				 n_test_post_nms=300, min_size=16):
 		self.mode = mode  # set to train/prediction
 		self.nms_iou = nms_iou
-		#   训练用到的建议框数量
+
+		# the number of proposals when training.
 		self.n_train_pre_nms = n_train_pre_nms
 		self.n_train_post_nms = n_train_post_nms
-		#   预测用到的建议框数量
+		# the number of proposals when predicting.
 		self.n_test_pre_nms = n_test_pre_nms
 		self.n_test_post_nms = n_test_post_nms
 		self.min_size = min_size
 
 	def __call__(self, loc, score, anchor, img_size, scale=1.):
 		"""
-		:param loc: the fine tuning value of the original anchors. (dx, dy, dw, dh)
-		:param score: the score (probability) of whether the anchor (?) contains an object or not.
-		:param anchor: the coordinates of the base anchors. (38 * 38 * 9, 4)
-		:param img_size:
+		:param loc: the fine tuning value of the original anchors. (dx, dy, dw, dh), (12996, 4)
+		:param score: the score (probability) of whether the anchor (?) contains an object or not. (12996,)
+		:param anchor: the coordinates of the base anchors. (12996, 4)
+		:param img_size: (600, 600)
 		:param scale: 1
-		:return: the selected rois after NMS. (tensor)
+		:return: the selected rois after NMS.
 		"""
 		if self.mode == "training":
 			n_pre_nms = self.n_train_pre_nms
@@ -49,7 +50,7 @@ class ProposalCreator:
 			anchor = anchor.cuda()
 		# turn the predicted results by RPN into roi.
 		# "loc" is the fine tuning value of the (x, y, w, h).
-		roi = loc2bbox(anchor, loc)  # a tensor.
+		roi = loc2bbox(anchor, loc)  # (12996, 4)
 
 		#  prevent the roi from going beyond the boundary.
 		roi[:, [0, 2]] = torch.clamp(roi[:, [0, 2]], min=0, max=img_size[1])
@@ -63,34 +64,32 @@ class ProposalCreator:
 
 		# select rois with the n_pre_nms highest score.
 		order = torch.argsort(score, descending=True)
-		if n_pre_nms > 0:
-			order = order[:n_pre_nms]
+		order = order[:n_pre_nms]
 		roi = roi[order, :]
 		score = score[order]
 
 		keep = nms(roi, score, self.nms_iou)
 		keep = keep[:n_post_nms]
+		# select 300/600 best rois.
 		roi = roi[keep]
 		return roi
 
 
-class RegionProposalNetwork(nn.Module):  # RPN
-	def __init__(self, in_channels=512, mid_channels=512, ratios=(0.5, 1, 2), anchor_scales=(8, 16, 32), feat_stride=16,
+class RegionProposalNetwork(nn.Module):
+	def __init__(self, in_channels=1024, mid_channels=512, ratios=(0.5, 1, 2), anchor_scales=(8, 16, 32), feat_stride=16,
 				 mode="training"):
 		super(RegionProposalNetwork, self).__init__()
 		# generate base anchors for one point (shape is (9, 4))
 		self.anchor_base = generate_anchor_base(anchor_scales=anchor_scales, ratios=ratios)
-		n_anchor = self.anchor_base.shape[0]
+		n_anchor = self.anchor_base.shape[0]  # 9
 
 		self.conv1 = nn.Conv2d(in_channels, mid_channels, (3, 3), (1, 1), 1)
-		# the size of the feature map stays the same.
+		# only change the channels from 1024 to 512.
 
 		self.score = nn.Conv2d(mid_channels, n_anchor * 2, (1, 1), (1, 1), 0)
 		self.loc = nn.Conv2d(mid_channels, n_anchor * 4, (1, 1), (1, 1), 0)
 
-		# -----------------------------------------#
-		#   特征点间距步长
-		# -----------------------------------------#
+		# the distance between feature points measured in the original image.
 		self.feat_stride = feat_stride
 		# -----------------------------------------#
 		#   用于对建议框解码并进行非极大抑制
@@ -107,10 +106,10 @@ class RegionProposalNetwork(nn.Module):  # RPN
 		:param x: the shared feature map.
 		:param img_size:
 		:param scale: 1
-		:return rpn_locs: the fine tuning value of the original anchors.
-		:return rpn_scores: the score (probability) of the roi to contain an object.
-		:return rois: all the roi in the minibatch (n).
-		:return roi_indices: a tensor to indicate which image the roi belongs to.
+		:return rpn_locs: the fine tuning value of the original anchors. (4, 12996, 4)
+		:return rpn_scores: the score (probability) of the roi to contain an object. (4, 12996, 2)
+		:return rois: all the roi in the minibatch (n). (600 * 4, 4)
+		:return roi_indices: a tensor to indicate which image the roi belongs to. (600 * 4,)
 		:return anchor: all of the base anchors. (38 * 38 * 9, 4)
 		"""
 		n, _, h, w = x.shape  # (4, 1024, 38, 38)
@@ -137,18 +136,19 @@ class RegionProposalNetwork(nn.Module):  # RPN
 
 		# generate all the anchors in the feature map.
 		anchor = _enumerate_shifted_anchor(np.array(self.anchor_base), self.feat_stride, h, w)  # (12996, 4)
+		# the coordinates in the anchor are of points on the edges.
 
 		rois = list()
 		roi_indices = list()
 		for i in range(n):  # n is the batch size.
 			# select some roi by NMS. (tensor)
-			roi = self.proposal_layer(rpn_locs[i], rpn_fg_scores[i], anchor, img_size, scale=scale)
+			roi = self.proposal_layer(rpn_locs[i], rpn_fg_scores[i], anchor, img_size, scale=scale)  # (600, 4)
 			# batch_index = i * torch.ones((len(roi),))
 			batch_index = torch.Tensor([i]) * torch.ones((len(roi),))
 			rois.append(roi)
 			roi_indices.append(batch_index)
 
-		rois = torch.cat(rois, dim=0)
-		roi_indices = torch.cat(roi_indices, dim=0)
+		rois = torch.cat(rois, dim=0)  # (600 * 4, 4)
+		roi_indices = torch.cat(roi_indices, dim=0)  # (600 * 4,)
 
 		return rpn_locs, rpn_scores, rois, roi_indices, anchor
