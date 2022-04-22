@@ -83,7 +83,7 @@ class AnchorTargetCreator(object):
 
 		return argmax_ious, max_ious, gt_argmax_ious
 
-	def _create_label(self, anchor, bbox):
+	def _create_label(self, anchor, bbox):  # anchor: 12996
 		# ------------------------------------------ #
 		#   1是正样本，0是负样本，-1忽略
 		#   初始化的时候全部设置为-1
@@ -100,7 +100,6 @@ class AnchorTargetCreator(object):
 		label[max_ious >= self.pos_iou_thresh] = 1
 		if len(gt_argmax_ious) > 0:
 			label[gt_argmax_ious] = 1
-
 
 		# if the number of positive samples is greater than 128, restrict it to 128.
 		n_pos = int(self.pos_ratio * self.n_sample)
@@ -129,6 +128,15 @@ class ProposalTargetCreator(object):
 		self.neg_iou_thresh_low = neg_iou_thresh_low
 
 	def __call__(self, roi, bbox, label, loc_normalize_std=(0.1, 0.1, 0.2, 0.2)):
+		"""
+		:param roi:
+		:param bbox:
+		:param label:
+		:param loc_normalize_std:
+		:return sample_roi: (128, 4)
+		:return gt_roi_loc: (128, 4)
+		:return gt_roi_label: (128,)
+		"""
 		roi = np.concatenate((roi.detach().cpu().numpy(), bbox), axis=0)
 		# numpy can not read CUDA tensor. it should be converted to CPU tensor.
 		iou = bbox_iou(roi, bbox)  # roi/bbox:(N, 4)
@@ -165,7 +173,6 @@ class ProposalTargetCreator(object):
 		if neg_index.size > 0:
 			neg_index = np.random.choice(neg_index, size=neg_roi_per_this_image, replace=False)
 
-
 		# ---------------------------------------------------------#
 		#   sample_roi      [n_sample, ]
 		#   gt_roi_loc      [n_sample, 4]
@@ -186,10 +193,10 @@ class ProposalTargetCreator(object):
 
 
 class FasterRCNNTrainer(nn.Module):
-	def __init__(self, faster_rcnn, optimizer):  # Adam.
+	def __init__(self, faster_rcnn, optimizer):
 		super(FasterRCNNTrainer, self).__init__()
 		self.faster_rcnn = faster_rcnn
-		self.optimizer = optimizer
+		self.optimizer = optimizer  # Adam.
 
 		self.rpn_sigma = 1
 		self.roi_sigma = 1
@@ -200,17 +207,16 @@ class FasterRCNNTrainer(nn.Module):
 		self.loc_normalize_std = [0.1, 0.1, 0.2, 0.2]
 
 	def _fast_rcnn_loc_loss(self, pred_loc, gt_loc, gt_label, sigma):
+		# smooth L1 loss.
 		pred_loc = pred_loc[gt_label > 0]
 		gt_loc = gt_loc[gt_label > 0]
 
 		sigma_squared = sigma ** 2
 		regression_diff = (gt_loc - pred_loc)
 		regression_diff = regression_diff.abs()
-		regression_loss = torch.where(
-			regression_diff < (1. / sigma_squared),
-			0.5 * sigma_squared * regression_diff ** 2,
-			regression_diff - 0.5 / sigma_squared
-		)
+		regression_loss = torch.where(regression_diff < (1. / sigma_squared),
+									  0.5 * sigma_squared * regression_diff ** 2,
+									  regression_diff - 0.5 / sigma_squared)
 		regression_loss = regression_loss.sum()
 		num_pos = (gt_label > 0).sum().float()
 
@@ -218,6 +224,13 @@ class FasterRCNNTrainer(nn.Module):
 		return regression_loss
 
 	def forward(self, imgs, bboxes, labels, scale):
+		"""
+		:param imgs: torch.Size([4, 3, 600, 600])
+		:param bboxes:
+		:param labels:
+		:param scale:
+		:return:
+		"""
 		n = imgs.shape[0]
 		img_size = imgs.shape[2:]
 
@@ -227,7 +240,8 @@ class FasterRCNNTrainer(nn.Module):
 		# -------------------------------------------------- #
 		#   利用rpn网络获得调整参数、得分、建议框、先验框
 		# -------------------------------------------------- #
-		rpn_locs, rpn_scores, rois, roi_indices, anchor = self.faster_rcnn.rpn(base_feature, img_size, scale)
+		# rpn_locs, rpn_scores, rois, roi_indices, anchor = self.faster_rcnn.rpn(base_feature, img_size, scale)
+		rpn_locs, rpn_scores, rois, roi_indices, anchor = self.faster_rcnn.rpn.forward(base_feature, img_size, scale)
 
 		rpn_loc_loss_all, rpn_cls_loss_all, roi_loc_loss_all, roi_cls_loss_all = 0, 0, 0, 0
 		for i in range(n):
@@ -239,14 +253,14 @@ class FasterRCNNTrainer(nn.Module):
 			feature = base_feature[i]
 
 			# -------------------------------------------------- #
-			#   利用真实框和先验框获得建议框网络应该有的预测结果
+			#   利用真实框和先验框获得RPN应该有的预测结果
 			#   给每个先验框都打上标签
 			#   gt_rpn_loc      [num_anchors, 4]
 			#   gt_rpn_label    [num_anchors, ]
 			# -------------------------------------------------- #
 			gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(bbox, anchor)
 			gt_rpn_loc = torch.Tensor(gt_rpn_loc)
-			gt_rpn_label = torch.Tensor(gt_rpn_label).long()
+			gt_rpn_label = torch.Tensor(gt_rpn_label).long()  # convert to long object.
 
 			if rpn_loc.is_cuda:
 				gt_rpn_loc = gt_rpn_loc.cuda()
@@ -260,13 +274,11 @@ class FasterRCNNTrainer(nn.Module):
 
 			# ------------------------------------------------------ #
 			#   利用真实框和建议框获得classifier网络应该有的预测结果
-			#   获得三个变量，分别是sample_roi, gt_roi_loc, gt_roi_label
-			#   sample_roi      [n_sample, ]
-			#   gt_roi_loc      [n_sample, 4]
-			#   gt_roi_label    [n_sample, ]
 			# ------------------------------------------------------ #
 			sample_roi, gt_roi_loc, gt_roi_label = self.proposal_target_creator(roi, bbox, label,
 																				self.loc_normalize_std)
+			# sample_roi: (128, 4)  gt_roi_loc: (128, 4)  gt_roi_label: (128,)
+
 			sample_roi = torch.Tensor(sample_roi)
 			gt_roi_loc = torch.Tensor(gt_roi_loc)
 			gt_roi_label = torch.Tensor(gt_roi_label).long()
@@ -278,15 +290,16 @@ class FasterRCNNTrainer(nn.Module):
 				gt_roi_loc = gt_roi_loc.cuda()
 				gt_roi_label = gt_roi_label.cuda()
 
-			roi_cls_loc, roi_score = self.faster_rcnn.head(torch.unsqueeze(feature, 0), sample_roi, sample_roi_index,
-														   img_size)
+			roi_cls_loc, roi_score = self.faster_rcnn.head.forward(torch.unsqueeze(feature, 0), sample_roi,
+																   sample_roi_index, img_size)
+			# roi_cls_loc: (1, 128, 84)  roi_score: (1, 128, 21).
 
 			# ------------------------------------------------------ #
 			#   根据建议框的种类，取出对应的回归预测结果
 			# ------------------------------------------------------ #
 			n_sample = roi_cls_loc.size()[1]
-			roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4)
-			roi_loc = roi_cls_loc[torch.arange(0, n_sample), gt_roi_label]
+			roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4)  # (128, 21, 4)
+			roi_loc = roi_cls_loc[torch.arange(0, n_sample), gt_roi_label]  # (128, 4)
 
 			# -------------------------------------------------- #
 			#   分别计算Classifier网络的回归损失和分类损失
@@ -301,6 +314,7 @@ class FasterRCNNTrainer(nn.Module):
 
 		losses = [rpn_loc_loss_all / n, rpn_cls_loss_all / n, roi_loc_loss_all / n, roi_cls_loss_all / n]
 		losses = losses + [sum(losses)]
+		# [rpn_loc_loss_all / n, rpn_cls_loss_all / n, roi_loc_loss_all / n, roi_cls_loss_all / n, sum(losses)]
 		return losses
 
 	def train_step(self, imgs, bboxes, labels, scale):
@@ -331,4 +345,3 @@ def weights_init(net, init_type='normal', init_gain=0.02):
 
 	print('initialize network with %s type' % init_type)
 	net.apply(init_func)
-
