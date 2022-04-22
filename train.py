@@ -7,11 +7,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from nets.frcnn import FasterRCNN
 from nets.frcnn_training import FasterRCNNTrainer, weights_init
-from utils.callbacks import LossHistory
 from utils.dataloader import FRCNNDataset, frcnn_dataset_collate
 from utils.utils_fit import fit_one_epoch
 from utils.utils import get_lr
-
+from torch.utils.tensorboard import SummaryWriter
 
 Cuda = True
 classes_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/model_data/voc_classes.txt'
@@ -20,6 +19,7 @@ with open(classes_path) as f:
 	for line in f:
 		class_names.append(line.strip())
 num_classes = len(class_names)
+writer = SummaryWriter('./logs')
 
 # ------------------------------------------------------------------------------------------------------------------
 #   如果训练过程中存在中断训练的操作，可以将model_path设置成logs文件夹下的权值文件，将已经训练了一部分的权值再次载入。
@@ -53,7 +53,7 @@ anchors_size = [8, 16, 32]
 #   占用的显存较小，仅对网络进行微调
 # ----------------------------------------------------#
 Init_Epoch = 0
-Freeze_Epoch = 5
+Freeze_Epoch = 2
 Freeze_batch_size = 4
 Freeze_lr = 1e-4
 # ----------------------------------------------------#
@@ -61,7 +61,7 @@ Freeze_lr = 1e-4
 #   此时模型的主干不被冻结了，特征提取网络会发生改变
 #   占用的显存较大，网络所有的参数都会发生改变
 # ----------------------------------------------------#
-UnFreeze_Epoch = 10
+UnFreeze_Epoch = 4
 Unfreeze_batch_size = 2
 Unfreeze_lr = 1e-5
 Freeze_Train = True
@@ -90,8 +90,6 @@ if Cuda:
 	model_train = model_train.cuda()
 else:
 	model_train = model.train()
-
-loss_history = LossHistory("logs/")
 
 with open(train_annotation_path) as f:
 	train_lines = f.readlines()  # have the info of the bbox
@@ -140,14 +138,59 @@ if True:
 			param.requires_grad = False
 
 	model.freezeBN()
-	# Because the batch size is too small, the BN is not stable, thus we need to freeze the BN
 
 	train_util = FasterRCNNTrainer(model, optimizer)
 
 	for epoch in range(start_epoch, end_epoch):
-		total_loss, val_loss = fit_one_epoch(model, train_util, loss_history, optimizer, epoch, epoch_step,
-											 epoch_step_val, gen, gen_val,
-											 end_epoch, Cuda)
+		total_loss, val_loss = 0, 0
+		print('Start Train')
+		with tqdm(total=epoch_step, desc=f'Epoch {epoch + 1}/{end_epoch}', postfix=dict, mininterval=0.3) as pbar:
+			for iteration, batch in enumerate(gen):
+				if iteration >= epoch_step:
+					break
+				images, boxes, labels = batch[0], batch[1], batch[2]
+				with torch.no_grad():
+					images = torch.from_numpy(images).type(torch.FloatTensor)
+					if Cuda:
+						images = images.cuda()
+
+				rpn_loc, rpn_cls, roi_loc, roi_cls, total = train_util.train_step(images, boxes, labels, 1)
+				# total is the addition of (rpn_loc, rpn_cls, roi_cls, roi_cls).
+
+				# .item() can convert the one element tensors to Python scalars.
+				total_loss += total.item()
+
+				pbar.set_postfix(**{'train_loss': '{:.2f}'.format(total_loss / (iteration + 1))})
+				pbar.update(1)
+
+		print('Finish Train')
+
+		print('Start Validation')
+		with tqdm(total=epoch_step_val, desc=f'Epoch {epoch + 1}/{end_epoch}', postfix=dict, mininterval=0.3) as pbar:
+			for iteration, batch in enumerate(gen_val):
+				if iteration >= epoch_step_val:
+					break
+				images, boxes, labels = batch[0], batch[1], batch[2]
+				with torch.no_grad():
+					images = torch.from_numpy(images).type(torch.FloatTensor)
+					if Cuda:
+						images = images.cuda()
+
+					train_util.optimizer.zero_grad()
+					_, _, _, _, val_total = train_util.forward(images, boxes, labels, 1)
+
+					val_loss += val_total.item()
+					pbar.set_postfix(**{'val_loss': '{:.2f}'.format(val_loss / (iteration + 1))})
+					pbar.update(1)
+
+		print('Finish Validation')
+		writer.add_scalar('total_loss/loss', total_loss / epoch_step)
+		writer.add_scalar('val_loss/loss', val_loss / epoch_step_val)
+		print('Epoch:' + str(epoch + 1) + '/' + str(end_epoch))
+		print('Total Loss: %.3f || Val Loss: %.3f ' % (total_loss / epoch_step, val_loss / epoch_step_val))
+		torch.save(model.state_dict(), 'logs/ep%03d-loss%.3f-val_loss%.3f.pth' % (
+			epoch + 1, total_loss / epoch_step, val_loss / epoch_step_val))
+
 		lr_scheduler.step()
 
 if True:
@@ -172,7 +215,6 @@ if True:
 	gen_val = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
 						 drop_last=True, collate_fn=frcnn_dataset_collate)
 
-
 	if Freeze_Train:
 		for param in model.extractor.parameters():
 			param.requires_grad = True
@@ -182,9 +224,53 @@ if True:
 	train_util = FasterRCNNTrainer(model, optimizer)
 
 	for epoch in range(start_epoch, end_epoch):
-		total_loss, val_loss = fit_one_epoch(model, train_util, loss_history, optimizer, epoch, epoch_step,
-											 epoch_step_val, gen, gen_val,
-											 end_epoch, Cuda)
+
+		total_loss, val_loss = 0, 0
+		print('Start Train')
+		with tqdm(total=epoch_step, desc=f'Epoch {epoch + 1}/{end_epoch}', postfix=dict, mininterval=0.3) as pbar:
+			for iteration, batch in enumerate(gen):
+				if iteration >= epoch_step:
+					break
+				images, boxes, labels = batch[0], batch[1], batch[2]
+				with torch.no_grad():
+					images = torch.from_numpy(images).type(torch.FloatTensor)
+					if Cuda:
+						images = images.cuda()
+
+				total = train_util.train_step(images, boxes, labels, 1)[0]
+				total_loss += total.item()
+
+				pbar.set_postfix(**{'train_loss': '{:.2f}'.format(total_loss / (iteration + 1))})
+				pbar.update(1)
+
+		print('Finish Train')
+
+		print('Start Validation')
+		with tqdm(total=epoch_step_val, desc=f'Epoch {epoch + 1}/{end_epoch}', postfix=dict, mininterval=0.3) as pbar:
+			for iteration, batch in enumerate(gen_val):
+				if iteration >= epoch_step_val:
+					break
+				images, boxes, labels = batch[0], batch[1], batch[2]
+				with torch.no_grad():
+					images = torch.from_numpy(images).type(torch.FloatTensor)
+					if Cuda:
+						images = images.cuda()
+
+					train_util.optimizer.zero_grad()
+					val_total = train_util.forward(images, boxes, labels, 1)[0]
+
+					val_loss += val_total.item()
+					pbar.set_postfix(**{'val_loss': '{:.2f}'.format(val_loss / (iteration + 1))})
+					pbar.update(1)
+
+		print('Finish Validation')
+		writer.add_scalar('total_loss/loss', total_loss / epoch_step)
+		writer.add_scalar('val_loss/loss', val_loss / epoch_step_val)
+		print('Epoch:' + str(epoch + 1) + '/' + str(end_epoch))
+		print('Total Loss: %.3f || Val Loss: %.3f ' % (total_loss / epoch_step, val_loss / epoch_step_val))
+		torch.save(model.state_dict(), 'logs/ep%03d-loss%.3f-val_loss%.3f.pth' % (
+			epoch + 1, total_loss / epoch_step, val_loss / epoch_step_val))
+
 		lr_scheduler.step()
 
-
+writer.close()
