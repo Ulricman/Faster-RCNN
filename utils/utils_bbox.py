@@ -5,15 +5,23 @@ from torchvision.ops import nms
 
 
 def loc2bbox(src_bbox, loc):
+	"""
+	:param src_bbox : the coordinates of the original anchors. (12996, 4)
+	:param loc: the fine tuning value of the (x, y, w, h). (12996, 4)
+	:return: adjusted coordinates. (12996, 4)
+	"""
 	if src_bbox.size()[0] == 0:
 		return torch.zeros((0, 4), dtype=loc.dtype)
 
-	src_width = torch.unsqueeze(src_bbox[:, 2] - src_bbox[:, 0], -1)
+	src_width = torch.unsqueeze(src_bbox[:, 2] - src_bbox[:, 0], -1)  # (12996, 1)
 	src_height = torch.unsqueeze(src_bbox[:, 3] - src_bbox[:, 1], -1)
+
+	# the midpoint on the left edge plus half of the width.
 	src_ctr_x = torch.unsqueeze(src_bbox[:, 0], -1) + 0.5 * src_width
+	# the midpoint on the up edge plus half of the height.
 	src_ctr_y = torch.unsqueeze(src_bbox[:, 1], -1) + 0.5 * src_height
 
-	dx = loc[:, 0::4]
+	dx = loc[:, 0::4]  # (12996, 1)
 	dy = loc[:, 1::4]
 	dw = loc[:, 2::4]
 	dh = loc[:, 3::4]
@@ -23,12 +31,11 @@ def loc2bbox(src_bbox, loc):
 	w = torch.exp(dw) * src_width
 	h = torch.exp(dh) * src_height
 
-	dst_bbox = torch.zeros_like(loc)
+	dst_bbox = torch.zeros_like(loc)  # (12996, 4)
 	dst_bbox[:, 0::4] = ctr_x - 0.5 * w
 	dst_bbox[:, 1::4] = ctr_y - 0.5 * h
 	dst_bbox[:, 2::4] = ctr_x + 0.5 * w
 	dst_bbox[:, 3::4] = ctr_y + 0.5 * h
-
 	return dst_bbox
 
 
