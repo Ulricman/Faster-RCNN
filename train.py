@@ -12,6 +12,7 @@ from utils.utils_fit import fit_one_epoch
 from utils.utils import get_lr
 from torch.utils.tensorboard import SummaryWriter
 
+
 Cuda = True
 classes_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/model_data/voc_classes.txt'
 class_names = []
@@ -53,7 +54,7 @@ anchors_size = [8, 16, 32]
 #   占用的显存较小，仅对网络进行微调
 # ----------------------------------------------------#
 Init_Epoch = 0
-Freeze_Epoch = 2
+Freeze_Epoch = 30
 Freeze_batch_size = 4
 Freeze_lr = 1e-4
 # ----------------------------------------------------#
@@ -61,10 +62,10 @@ Freeze_lr = 1e-4
 #   此时模型的主干不被冻结了，特征提取网络会发生改变
 #   占用的显存较大，网络所有的参数都会发生改变
 # ----------------------------------------------------#
-UnFreeze_Epoch = 4
+UnFreeze_Epoch = 60
 Unfreeze_batch_size = 2
 Unfreeze_lr = 1e-5
-Freeze_Train = True
+Freeze_Train = False
 num_workers = 4
 #   获得图片路径和标签
 train_annotation_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/2007_train.txt'
@@ -83,9 +84,10 @@ if model_path != '':
 	model_dict.update(pretrained_dict)
 	model.load_state_dict(model_dict)
 
-# model_train = model.train()
 if Cuda:
 	model_train = torch.nn.DataParallel(model)
+	# automatically set up multiple GPUs for training.
+
 	cudnn.benchmark = True
 	model_train = model_train.cuda()
 else:
@@ -99,7 +101,6 @@ num_train = len(train_lines)  # 2501
 num_val = len(val_lines)  # 2510
 
 # ------------------------------------------------------#
-#   主干特征提取网络特征通用，冻结训练可以加快训练速度
 #   也可以在训练初期防止权值被破坏。
 #   Init_Epoch为起始世代
 #   Freeze_Epoch为冻结训练的世代
@@ -184,8 +185,8 @@ if True:
 					pbar.update(1)
 
 		print('Finish Validation')
-		writer.add_scalar('total_loss/loss', total_loss / epoch_step)
-		writer.add_scalar('val_loss/loss', val_loss / epoch_step_val)
+		writer.add_scalar('total_loss/loss', total_loss / epoch_step, epoch + 1)
+		writer.add_scalar('val_loss/loss', val_loss / epoch_step_val, epoch + 1)
 		print('Epoch:' + str(epoch + 1) + '/' + str(end_epoch))
 		print('Total Loss: %.3f || Val Loss: %.3f ' % (total_loss / epoch_step, val_loss / epoch_step_val))
 		torch.save(model.state_dict(), 'logs/ep%03d-loss%.3f-val_loss%.3f.pth' % (
@@ -264,8 +265,8 @@ if True:
 					pbar.update(1)
 
 		print('Finish Validation')
-		writer.add_scalar('total_loss/loss', total_loss / epoch_step)
-		writer.add_scalar('val_loss/loss', val_loss / epoch_step_val)
+		writer.add_scalar('total_loss/loss', total_loss / epoch_step, epoch + 1)
+		writer.add_scalar('val_loss/loss', val_loss / epoch_step_val, epoch + 1)
 		print('Epoch:' + str(epoch + 1) + '/' + str(end_epoch))
 		print('Total Loss: %.3f || Val Loss: %.3f ' % (total_loss / epoch_step, val_loss / epoch_step_val))
 		torch.save(model.state_dict(), 'logs/ep%03d-loss%.3f-val_loss%.3f.pth' % (
