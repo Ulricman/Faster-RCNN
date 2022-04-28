@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
@@ -11,10 +12,13 @@ from utils.dataloader import FRCNNDataset, frcnn_dataset_collate
 from utils.utils_fit import fit_one_epoch
 from utils.utils import get_lr
 from torch.utils.tensorboard import SummaryWriter
-
+from get_map import compute_mAP
+from optparse import OptionParser
 
 Cuda = True
-classes_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/model_data/voc_classes.txt'
+
+root = '/SSD_DISK/users/yuanjunhao/FasterTorch'
+classes_path = os.path.join(root, 'model_data/voc_classes.txt')
 class_names = []
 with open(classes_path) as f:
 	for line in f:
@@ -48,28 +52,15 @@ backbone = "resnet50"
 pretrained = True
 anchors_size = [8, 16, 32]
 
-#   训练分为两个阶段，分别是冻结阶段和解冻阶段。
-#   冻结阶段训练参数
-#   此时模型的主干被冻结了，特征提取网络不发生改变
-#   占用的显存较小，仅对网络进行微调
-# ----------------------------------------------------#
-Init_Epoch = 0
-Freeze_Epoch = 30
-Freeze_batch_size = 4
-Freeze_lr = 1e-4
-# ----------------------------------------------------#
-#   解冻阶段训练参数
-#   此时模型的主干不被冻结了，特征提取网络会发生改变
-#   占用的显存较大，网络所有的参数都会发生改变
-# ----------------------------------------------------#
-UnFreeze_Epoch = 60
-Unfreeze_batch_size = 2
-Unfreeze_lr = 1e-5
-Freeze_Train = False
+batch_size = 4
+lr = 1e-4
+epochs = 50
+
 num_workers = 4
 #   获得图片路径和标签
-train_annotation_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/2007_train.txt'
-val_annotation_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/2007_val.txt'
+train_annotation_path = os.path.join(root, 'trainSet.txt')
+val_annotation_path = os.path.join(root, 'valSet.txt')
+
 
 #   获取classes和anchor
 model = FasterRCNN(num_classes, anchor_scales=anchors_size, backbone=backbone, pretrained=pretrained)
@@ -100,19 +91,8 @@ with open(val_annotation_path) as f:
 num_train = len(train_lines)  # 2501
 num_val = len(val_lines)  # 2510
 
-# ------------------------------------------------------#
-#   也可以在训练初期防止权值被破坏。
-#   Init_Epoch为起始世代
-#   Freeze_Epoch为冻结训练的世代
-#   Epoch总训练世代
-#   提示OOM或者显存不足请调小Batch_size
-# ------------------------------------------------------#
+# start training
 if True:
-	batch_size = Freeze_batch_size
-	lr = Freeze_lr
-	start_epoch = Init_Epoch
-	end_epoch = Freeze_Epoch
-
 	epoch_step = num_train // batch_size
 	epoch_step_val = num_val // batch_size
 
@@ -131,21 +111,12 @@ if True:
 	gen_val = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
 						 drop_last=True, collate_fn=frcnn_dataset_collate)
 
-	# ------------------------------------#
-	#   冻结一定部分训练
-	# ------------------------------------#
-	if Freeze_Train:
-		for param in model.extractor.parameters():
-			param.requires_grad = False
-
-	model.freezeBN()
-
 	train_util = FasterRCNNTrainer(model, optimizer)
 
-	for epoch in range(start_epoch, end_epoch):
+	for epoch in range(epochs):
 		total_loss, val_loss = 0, 0
 		print('Start Train')
-		with tqdm(total=epoch_step, desc=f'Epoch {epoch + 1}/{end_epoch}', postfix=dict, mininterval=0.3) as pbar:
+		with tqdm(total=epoch_step, desc=f'Epoch {epoch + 1}/{epochs}', postfix=dict, mininterval=0.3) as pbar:
 			for iteration, batch in enumerate(gen):
 				if iteration >= epoch_step:
 					break
@@ -155,7 +126,7 @@ if True:
 					if Cuda:
 						images = images.cuda()
 
-				rpn_loc, rpn_cls, roi_loc, roi_cls, total = train_util.train_step(images, boxes, labels, 1)
+				total = train_util.train_step(images, boxes, labels, 1)[-1]
 				# total is the addition of (rpn_loc, rpn_cls, roi_cls, roi_cls).
 
 				# .item() can convert the one element tensors to Python scalars.
@@ -167,7 +138,7 @@ if True:
 		print('Finish Train')
 
 		print('Start Validation')
-		with tqdm(total=epoch_step_val, desc=f'Epoch {epoch + 1}/{end_epoch}', postfix=dict, mininterval=0.3) as pbar:
+		with tqdm(total=epoch_step_val, desc=f'Epoch {epoch + 1}/{epochs}', postfix=dict, mininterval=0.3) as pbar:
 			for iteration, batch in enumerate(gen_val):
 				if iteration >= epoch_step_val:
 					break
@@ -178,99 +149,30 @@ if True:
 						images = images.cuda()
 
 					train_util.optimizer.zero_grad()
-					_, _, _, _, val_total = train_util.forward(images, boxes, labels, 1)
+					val_total = train_util.forward(images, boxes, labels, 1)[-1]
 
 					val_loss += val_total.item()
+
 					pbar.set_postfix(**{'val_loss': '{:.2f}'.format(val_loss / (iteration + 1))})
 					pbar.update(1)
 
 		print('Finish Validation')
+
 		writer.add_scalar('total_loss/loss', total_loss / epoch_step, epoch + 1)
 		writer.add_scalar('val_loss/loss', val_loss / epoch_step_val, epoch + 1)
-		print('Epoch:' + str(epoch + 1) + '/' + str(end_epoch))
+
+		print('Epoch:' + str(epoch + 1) + '/' + str(epochs))
 		print('Total Loss: %.3f || Val Loss: %.3f ' % (total_loss / epoch_step, val_loss / epoch_step_val))
-		torch.save(model.state_dict(), 'logs/ep%03d-loss%.3f-val_loss%.3f.pth' % (
-			epoch + 1, total_loss / epoch_step, val_loss / epoch_step_val))
 
-		lr_scheduler.step()
+		weights_name = 'logs/ep%03d-loss%.3f-val_loss%.3f.pth' % (
+			epoch + 1, total_loss / epoch_step, val_loss / epoch_step_val)
 
-if True:
-	batch_size = Unfreeze_batch_size
-	lr = Unfreeze_lr
-	start_epoch = Freeze_Epoch
-	end_epoch = UnFreeze_Epoch
+		torch.save(model.state_dict(), weights_name)
 
-	epoch_step = num_train // batch_size
-	epoch_step_val = num_val // batch_size
-
-	if epoch_step == 0 or epoch_step_val == 0:
-		raise ValueError("The dataset is too small for training, please expand the dataset.")
-
-	optimizer = optim.Adam(model_train.parameters(), lr, weight_decay=5e-4)
-	lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.96)
-
-	train_dataset = FRCNNDataset(train_lines, input_shape, train=True)
-	val_dataset = FRCNNDataset(val_lines, input_shape, train=False)
-	gen = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
-					 drop_last=True, collate_fn=frcnn_dataset_collate)
-	gen_val = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
-						 drop_last=True, collate_fn=frcnn_dataset_collate)
-
-	if Freeze_Train:
-		for param in model.extractor.parameters():
-			param.requires_grad = True
-
-	model.freezeBN()
-
-	train_util = FasterRCNNTrainer(model, optimizer)
-
-	for epoch in range(start_epoch, end_epoch):
-
-		total_loss, val_loss = 0, 0
-		print('Start Train')
-		with tqdm(total=epoch_step, desc=f'Epoch {epoch + 1}/{end_epoch}', postfix=dict, mininterval=0.3) as pbar:
-			for iteration, batch in enumerate(gen):
-				if iteration >= epoch_step:
-					break
-				images, boxes, labels = batch[0], batch[1], batch[2]
-				with torch.no_grad():
-					images = torch.from_numpy(images).type(torch.FloatTensor)
-					if Cuda:
-						images = images.cuda()
-
-				total = train_util.train_step(images, boxes, labels, 1)[0]
-				total_loss += total.item()
-
-				pbar.set_postfix(**{'train_loss': '{:.2f}'.format(total_loss / (iteration + 1))})
-				pbar.update(1)
-
-		print('Finish Train')
-
-		print('Start Validation')
-		with tqdm(total=epoch_step_val, desc=f'Epoch {epoch + 1}/{end_epoch}', postfix=dict, mininterval=0.3) as pbar:
-			for iteration, batch in enumerate(gen_val):
-				if iteration >= epoch_step_val:
-					break
-				images, boxes, labels = batch[0], batch[1], batch[2]
-				with torch.no_grad():
-					images = torch.from_numpy(images).type(torch.FloatTensor)
-					if Cuda:
-						images = images.cuda()
-
-					train_util.optimizer.zero_grad()
-					val_total = train_util.forward(images, boxes, labels, 1)[0]
-
-					val_loss += val_total.item()
-					pbar.set_postfix(**{'val_loss': '{:.2f}'.format(val_loss / (iteration + 1))})
-					pbar.update(1)
-
-		print('Finish Validation')
-		writer.add_scalar('total_loss/loss', total_loss / epoch_step, epoch + 1)
-		writer.add_scalar('val_loss/loss', val_loss / epoch_step_val, epoch + 1)
-		print('Epoch:' + str(epoch + 1) + '/' + str(end_epoch))
-		print('Total Loss: %.3f || Val Loss: %.3f ' % (total_loss / epoch_step, val_loss / epoch_step_val))
-		torch.save(model.state_dict(), 'logs/ep%03d-loss%.3f-val_loss%.3f.pth' % (
-			epoch + 1, total_loss / epoch_step, val_loss / epoch_step_val))
+		mAP, mIOU, acc = compute_mAP(getGT=False, weights_name=weights_name)
+		writer.add_scalar('mAP', mAP, epoch + 1)
+		writer.add_scalar('mIOU', mIOU, epoch + 1)
+		writer.add_scalar('acc', acc, epoch + 1)
 
 		lr_scheduler.step()
 
