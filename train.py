@@ -3,38 +3,19 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-
+import os
 from nets.frcnn import FasterRCNN
 from nets.frcnn_training import FasterRCNNTrainer, weights_init
-# from utils.callbacks import LossHistory
 from utils.dataloader import FRCNNDataset, frcnn_dataset_collate
 from utils.utils import get_classes
 from utils.utils_fit import fit_one_epoch
 from torch.utils.tensorboard import SummaryWriter
+from get_map import compute_mAP
+from optparse import OptionParser
 
-'''
-训练自己的目标检测模型一定需要注意以下几点：
-1、训练前仔细检查自己的格式是否满足要求，该库要求数据集格式为VOC格式，需要准备好的内容有输入图片和标签
-   输入图片为.jpg图片，无需固定大小，传入训练前会自动进行resize。
-   灰度图会自动转成RGB图片进行训练，无需自己修改。
-   输入图片如果后缀非jpg，需要自己批量转成jpg后再开始训练。
-
-   标签为.xml格式，文件中会有需要检测的目标信息，标签文件和输入图片文件相对应。
-
-2、训练好的权值文件保存在logs文件夹中，每个epoch都会保存一次，如果只是训练了几个step是不会保存的，epoch和step的概念要捋清楚一下。
-   在训练过程中，该代码并没有设定只保存最低损失的，因此按默认参数训练完会有100个权值，如果空间不够可以自行删除。
-   这个并不是保存越少越好也不是保存越多越好，有人想要都保存、有人想只保存一点，为了满足大多数的需求，还是都保存可选择性高。
-
-3、损失值的大小用于判断是否收敛，比较重要的是有收敛的趋势，即验证集损失不断下降，如果验证集损失基本上不改变的话，模型基本上就收敛了。
-   损失值的具体大小并没有什么意义，大和小只在于损失的计算方式，并不是接近于0才好。如果想要让损失好看点，可以直接到对应的损失函数里面除上10000。
-   训练过程中的损失值会保存在logs文件夹下的loss_%Y_%m_%d_%H_%M_%S文件夹中
-
-4、调参是一门蛮重要的学问，没有什么参数是一定好的，现有的参数是我测试过可以正常训练的参数，因此我会建议用现有的参数。
-   但是参数本身并不是绝对的，比如随着batch的增大学习率也可以增大，效果也会好一些；过深的网络不要用太大的学习率等等。
-   这些都是经验上，只能靠各位同学多查询资料和自己试试了。
-'''
 if __name__ == "__main__":
 	writer = SummaryWriter('logs/tensorboard')
+	root = '/SSD_DISK/users/yuanjunhao/FasterTorch/New'
 
 	# -------------------------------#
 	#   是否使用Cuda
@@ -44,7 +25,8 @@ if __name__ == "__main__":
 	# --------------------------------------------------------#
 	#   训练前一定要修改classes_path，使其对应自己的数据集
 	# --------------------------------------------------------#
-	classes_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/New/model_data/voc_classes.txt'
+	# classes_path = '/SSD_DISK/users/yuanjunhao/FasterTorch/New/model_data/voc_classes.txt'
+	classes_path = os.path.join(root, 'model_data/voc_classes.txt')
 	# ----------------------------------------------------------------------------------------------------------------------------#
 	#   权值文件的下载请看README，可以通过网盘下载。模型的 预训练权重 对不同数据集是通用的，因为特征是通用的。
 	#   模型的 预训练权重 比较重要的部分是 主干特征提取网络的权值部分，用于进行特征提取。
@@ -101,7 +83,7 @@ if __name__ == "__main__":
 	#   占用的显存较小，仅对网络进行微调
 	# ----------------------------------------------------#
 	Init_Epoch = 0
-	Freeze_Epoch = 20
+	Freeze_Epoch = 30
 	Freeze_batch_size = 4
 	Freeze_lr = 1e-4
 	# ----------------------------------------------------#
@@ -112,21 +94,15 @@ if __name__ == "__main__":
 	UnFreeze_Epoch = 70
 	Unfreeze_batch_size = 2
 	Unfreeze_lr = 1e-5
-	# ------------------------------------------------------#
-	#   是否进行冻结训练，默认先冻结主干训练后解冻训练。
-	# ------------------------------------------------------#
+
 	Freeze_Train = True
-	# ------------------------------------------------------#
-	#   用于设置是否使用多线程读取数据
-	#   开启后会加快数据读取速度，但是会占用更多内存
-	#   内存较小的电脑可以设置为2或者0
-	# ------------------------------------------------------#
+
 	num_workers = 4
 	# ----------------------------------------------------#
 	#   获得图片路径和标签
 	# ----------------------------------------------------#
-	train_annotation_path = '2007_train.txt'
-	val_annotation_path = '2007_val.txt'
+	train_annotation_path = os.path.join(root, 'trainSet.txt')
+	val_annotation_path = os.path.join(root, 'valSet.txt')
 
 	# ----------------------------------------------------#
 	#   获取classes和anchor
@@ -151,7 +127,6 @@ if __name__ == "__main__":
 		cudnn.benchmark = True
 		model_train = model_train.cuda()
 
-	# loss_history = LossHistory("logs/")
 
 	# ---------------------------#
 	#   读取数据集对应的txt
@@ -173,7 +148,7 @@ if __name__ == "__main__":
 		epoch_step_val = num_val // batch_size
 
 		if epoch_step == 0 or epoch_step_val == 0:
-			raise ValueError("数据集过小，无法进行训练，请扩充数据集。")
+			raise ValueError("The dataset is too small, please expand the dataset.")
 
 		optimizer = optim.Adam(model_train.parameters(), lr, weight_decay=5e-4)
 		lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.96)
@@ -185,16 +160,12 @@ if __name__ == "__main__":
 		gen_val = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
 							 drop_last=True, collate_fn=frcnn_dataset_collate)
 
-		# ------------------------------------#
-		#   冻结一定部分训练
-		# ------------------------------------#
+
 		if Freeze_Train:
 			for param in model.extractor.parameters():
 				param.requires_grad = False
 
-		# ------------------------------------#
-		#   冻结bn层
-		# ------------------------------------#
+		# freeze the BN
 		model.freeze_bn()
 
 		train_util = FasterRCNNTrainer(model, optimizer)
@@ -203,21 +174,16 @@ if __name__ == "__main__":
 			results = fit_one_epoch(model, train_util, optimizer, epoch, epoch_step, epoch_step_val, gen,
 									gen_val, end_epoch, Cuda)
 
-			rpn_cls_loss = results[0]
-			rpn_loc_loss = results[1]
-			roi_cls_loss = results[2]
-			roi_loc_loss = results[3]
-			train_loss = results[4]
-			val_loss = results[5]
-			lr = results[6]
-
-			writer.add_scalar('rpn_cls_loss/loss', rpn_cls_loss, epoch + 1)
-			writer.add_scalar('rpn_loc_loss/loss', rpn_loc_loss, epoch + 1)
-			writer.add_scalar('roi_cls_loss/loss', roi_cls_loss, epoch + 1)
-			writer.add_scalar('roi_loc_loss/loss', roi_loc_loss, epoch + 1)
-			writer.add_scalar('train_loss/loss', train_loss, epoch + 1)
-			writer.add_scalar('val_loss/loss', val_loss, epoch + 1)
-			writer.add_scalar('lr', lr, epoch + 1)
+			writer.add_scalar('rpn_cls_loss/loss', results[0], epoch + 1)
+			writer.add_scalar('rpn_loc_loss/loss', results[1], epoch + 1)
+			writer.add_scalar('roi_cls_loss/loss', results[2], epoch + 1)
+			writer.add_scalar('roi_loc_loss/loss', results[3], epoch + 1)
+			writer.add_scalar('train_loss/loss', results[4], epoch + 1)
+			writer.add_scalar('val_loss/loss', results[5], epoch + 1)
+			writer.add_scalar('lr', results[6], epoch + 1)
+			writer.add_scalar('mAP', results[7], epoch + 1)
+			writer.add_scalar('mIOU', results[8], epoch + 1)
+			writer.add_scalar('acc', results[9], epoch + 1)
 
 			lr_scheduler.step()
 
@@ -231,7 +197,7 @@ if __name__ == "__main__":
 		epoch_step_val = num_val // batch_size
 
 		if epoch_step == 0 or epoch_step_val == 0:
-			raise ValueError("数据集过小，无法进行训练，请扩充数据集。")
+			raise ValueError("The dataset is too small, please expand the dataset.")
 
 		optimizer = optim.Adam(model_train.parameters(), lr, weight_decay=5e-4)
 		lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.96)
@@ -261,21 +227,16 @@ if __name__ == "__main__":
 			results = fit_one_epoch(model, train_util, optimizer, epoch, epoch_step, epoch_step_val, gen,
 									gen_val, end_epoch, Cuda)
 
-			rpn_cls_loss = results[0]
-			rpn_loc_loss = results[1]
-			roi_cls_loss = results[2]
-			roi_loc_loss = results[3]
-			train_loss = results[4]
-			val_loss = results[5]
-			lr = results[6]
-
-			writer.add_scalar('rpn_cls_loss/loss', rpn_cls_loss, epoch + 1)
-			writer.add_scalar('rpn_loc_loss/loss', rpn_loc_loss, epoch + 1)
-			writer.add_scalar('roi_cls_loss/loss', roi_cls_loss, epoch + 1)
-			writer.add_scalar('roi_loc_loss/loss', roi_loc_loss, epoch + 1)
-			writer.add_scalar('train_loss/loss', train_loss, epoch + 1)
-			writer.add_scalar('val_loss/loss', val_loss, epoch + 1)
-			writer.add_scalar('lr', lr, epoch + 1)
+			writer.add_scalar('rpn_cls_loss/loss', results[0], epoch + 1)
+			writer.add_scalar('rpn_loc_loss/loss', results[1], epoch + 1)
+			writer.add_scalar('roi_cls_loss/loss', results[2], epoch + 1)
+			writer.add_scalar('roi_loc_loss/loss', results[3], epoch + 1)
+			writer.add_scalar('train_loss/loss', results[4], epoch + 1)
+			writer.add_scalar('val_loss/loss', results[5], epoch + 1)
+			writer.add_scalar('lr', results[6], epoch + 1)
+			writer.add_scalar('mAP', results[7], epoch + 1)
+			writer.add_scalar('mIOU', results[8], epoch + 1)
+			writer.add_scalar('acc', results[9], epoch + 1)
 
 			lr_scheduler.step()
 
