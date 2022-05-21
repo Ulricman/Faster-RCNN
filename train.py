@@ -7,32 +7,27 @@ import os
 from nets.frcnn import FasterRCNN
 from nets.frcnn_training import FasterRCNNTrainer, weights_init
 from utils.dataloader import FRCNNDataset, frcnn_dataset_collate
-from utils.utils import get_classes
-# from utils.utils_fit import fit_one_epoch
-from utils_fit import fit_one_epoch
+from utils.utils_fit import fit_one_epoch
 from torch.utils.tensorboard import SummaryWriter
-from get_map import compute_mAP
 from optparse import OptionParser
 
 parser = OptionParser()
 
-parser.add_option('-p', '--path', dest='path', help='The path to the current file.')
-parser.add_option('--cuda', dest='cuda', help='Whether use GPU or not.', default=True)
+parser.add_option('--cuda', dest='cuda', help='Whether to use GPU or not.', default=True)
 parser.add_option('--backbone', dest='backbone', help='The backbone to use in feature extraction.', default='resnet50')
 parser.add_option('--pretrained', dest='pretrained', help='Whether to use the pretrained weights of the backbone.',
 				  default=True)
 
 (options, args) = parser.parse_args()
 
-if not options.path:
-	parser.error('Error:the path of the current file must be specified. Pass --path to command line')
 
 if options.backbone != 'resnet50' and options.backbone != 'vgg':
 	parser.error('Error:the backbone of network should be either resnet50 or vgg.')
 
 writer = SummaryWriter('logs/tensorboard')
 
-root = options.path
+root = os.getcwd()
+# root = '/SSD_DISK/users/yuanjunhao/work'
 
 Cuda = bool(options.cuda)
 
@@ -169,16 +164,16 @@ if True:
 		results = fit_one_epoch(model, train_util, optimizer, epoch, epoch_step, epoch_step_val, gen,
 								gen_val, end_epoch, Cuda, backbone)
 
-		writer.add_scalar('rpn_cls_loss/loss', results[0], epoch + 1)
-		writer.add_scalar('rpn_loc_loss/loss', results[1], epoch + 1)
-		writer.add_scalar('roi_cls_loss/loss', results[2], epoch + 1)
-		writer.add_scalar('roi_loc_loss/loss', results[3], epoch + 1)
-		writer.add_scalar('train_loss/loss', results[4], epoch + 1)
-		writer.add_scalar('val_loss/loss', results[5], epoch + 1)
-		writer.add_scalar('lr', results[6], epoch + 1)
-		writer.add_scalar('mAP', results[7], epoch + 1)
-		writer.add_scalar('mIOU', results[8], epoch + 1)
-		writer.add_scalar('acc', results[9], epoch + 1)
+		writer.add_scalar('loss/rpn_cls_loss', results[0], epoch + 1)
+		writer.add_scalar('loss/rpn_loc_loss', results[1], epoch + 1)
+		writer.add_scalar('loss/roi_cls_loss', results[2], epoch + 1)
+		writer.add_scalar('loss/roi_loc_loss', results[3], epoch + 1)
+		writer.add_scalar('loss/train_loss', results[4], epoch + 1)
+		writer.add_scalar('loss/val_loss', results[5], epoch + 1)
+		writer.add_scalar('evaluation/lr', results[6], epoch + 1)
+		writer.add_scalar('evaluation/mAP', results[7], epoch + 1)
+		writer.add_scalar('evaluation/mIOU', results[8], epoch + 1)
+		writer.add_scalar('evaluation/acc', results[9], epoch + 1)
 
 		lr_scheduler.step()
 
@@ -217,16 +212,16 @@ if True:
 		results = fit_one_epoch(model, train_util, optimizer, epoch, epoch_step, epoch_step_val, gen,
 								gen_val, end_epoch, Cuda, backbone)
 
-		writer.add_scalar('rpn_cls_loss/loss', results[0], epoch + 1)
-		writer.add_scalar('rpn_loc_loss/loss', results[1], epoch + 1)
-		writer.add_scalar('roi_cls_loss/loss', results[2], epoch + 1)
-		writer.add_scalar('roi_loc_loss/loss', results[3], epoch + 1)
-		writer.add_scalar('train_loss/loss', results[4], epoch + 1)
-		writer.add_scalar('val_loss/loss', results[5], epoch + 1)
-		writer.add_scalar('lr', results[6], epoch + 1)
-		writer.add_scalar('mAP', results[7], epoch + 1)
-		writer.add_scalar('mIOU', results[8], epoch + 1)
-		writer.add_scalar('acc', results[9], epoch + 1)
+		writer.add_scalar('loss/rpn_cls_loss', results[0], epoch + 1)
+		writer.add_scalar('loss/rpn_loc_loss', results[1], epoch + 1)
+		writer.add_scalar('loss/roi_cls_loss', results[2], epoch + 1)
+		writer.add_scalar('loss/roi_loc_loss', results[3], epoch + 1)
+		writer.add_scalar('loss/train_loss', results[4], epoch + 1)
+		writer.add_scalar('loss/val_loss', results[5], epoch + 1)
+		writer.add_scalar('evaluation/lr', results[6], epoch + 1)
+		writer.add_scalar('evaluation/mAP', results[7], epoch + 1)
+		writer.add_scalar('evaluation/mIOU', results[8], epoch + 1)
+		writer.add_scalar('evaluation/acc', results[9], epoch + 1)
 
 		lr_scheduler.step()
 
