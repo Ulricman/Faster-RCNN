@@ -3,10 +3,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torchvision.ops import nms
-# from utils import enumerate_shifted_anchor, generate_anchor_base, loc2bbox
 # from utils import loc2bbox
-from utils import loc2bbox
-from utils import enumerate_shifted_anchor, generate_anchor_base
+from utils import enumerate_shifted_anchor, generate_anchor_base, loc2bbox
 
 
 
