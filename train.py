@@ -52,7 +52,7 @@ backbone = options.backbone
 #   如果不设置model_path，pretrained = True，此时仅加载主干开始训练。
 #   如果不设置model_path，pretrained = False，Freeze_Train = Fasle，此时从0开始训练，且没有冻结主干的过程。
 # ----------------------------------------------------------------------------------------------------------------------------#
-pretrained = bool(options.pretrained)
+pretrained = bool(options.pretrained == 'True')
 # ------------------------------------------------------------------------#
 #   anchors_size用于设定先验框的大小，每个特征点均存在9个先验框。
 #   anchors_size每个数对应3个先验框。
