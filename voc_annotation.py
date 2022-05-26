@@ -40,3 +40,14 @@ if __name__ == '__main__':
 			convert_annotation(year, image_id, list_file)
 			list_file.write('\n')
 		list_file.close()
+
+	os.rename('2007_test.txt', 'valSet.txt')
+	os.rename('2012_val.txt', 'testSet.txt')
+
+	f1 = open('2007_train.txt', 'a+', encoding='utf-8')
+	with open('2007_val.txt', 'r', encoding='utf-8') as f2:
+		for line in f2:
+			f1.write(line)
+
+	os.rename('2007_train.txt', 'trainSet.txt')
+	os.remove('2007_val.txt')
